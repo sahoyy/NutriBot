@@ -1,13 +1,49 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { TrendingUp, Plus, Trash2, Search, Apple, Coffee, Utensils, Pizza } from 'lucide-react';
+import {
+  auth,
+  saveCalorieEntry,
+  getCalorieEntriesByDate,
+  deleteCalorieEntry,
+  updateCalorieQuantity
+} from '../firebase-config';
 
 export default function CalorieCounter() {
+  const today = new Date().toISOString().split('T')[0];
+
+  const [selectedDate] = useState(today);
+
+  const [loading, setLoading] = useState(false);
   const [foods, setFoods] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddFood, setShowAddFood] = useState(false);
   const [customFood, setCustomFood] = useState({ name: '', calories: '', serving: '' });
 
-  // Common foods database
+  useEffect(() => {
+    const user = auth.currentUser;
+    if (!user) return;
+
+    const loadData = async () => {
+      setLoading(true);
+      const res = await getCalorieEntriesByDate(user.uid, selectedDate);
+      if (res.success) {
+        setFoods(
+          res.entries.map(e => ({
+            id: e.id,
+            name: e.foodName,
+            calories: e.calories,
+            serving: e.serving || '1 serving',
+            quantity: e.quantity || 1,
+            icon: Utensils
+          }))
+        );
+      }
+      setLoading(false);
+    };
+
+    loadData();
+  }, [selectedDate]);
+
   const foodDatabase = [
     { name: 'Banana', calories: 105, serving: '1 medium (118g)', icon: Apple },
     { name: 'Apple', calories: 95, serving: '1 medium (182g)', icon: Apple },
@@ -30,41 +66,87 @@ export default function CalorieCounter() {
     food.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const addFood = (food) => {
-    setFoods([...foods, { ...food, id: Date.now(), quantity: 1 }]);
-    setSearchQuery('');
+  const addFood = async (food) => {
+    const user = auth.currentUser;
+    if (!user) return;
+
+    const entry = {
+      foodName: food.name,
+      calories: food.calories,
+      serving: food.serving,
+      quantity: 1,
+      date: selectedDate
+    };
+
+    const res = await saveCalorieEntry(user.uid, entry);
+    if (res.success) {
+      setFoods(prev => [
+        ...prev,
+        { id: res.id, ...entry, name: entry.foodName, icon: food.icon }
+      ]);
+    }
   };
 
-  const addCustomFood = () => {
-    if (customFood.name && customFood.calories) {
-      setFoods([...foods, {
-        id: Date.now(),
-        name: customFood.name,
-        calories: parseInt(customFood.calories),
-        serving: customFood.serving || '1 serving',
-        quantity: 1,
-        icon: Utensils
-      }]);
+  const addCustomFood = async () => {
+    const user = auth.currentUser;
+    if (!user || !customFood.name || !customFood.calories) return;
+
+    const entry = {
+      foodName: customFood.name,
+      calories: parseInt(customFood.calories),
+      serving: customFood.serving || '1 serving',
+      quantity: 1,
+      date: selectedDate
+    };
+
+    const res = await saveCalorieEntry(user.uid, entry);
+    if (res.success) {
+      setFoods(prev => [
+        ...prev,
+        {
+          id: res.id,
+          name: entry.foodName,
+          calories: entry.calories,
+          serving: entry.serving,
+          quantity: 1,
+          icon: Utensils
+        }
+      ]);
       setCustomFood({ name: '', calories: '', serving: '' });
       setShowAddFood(false);
     }
   };
 
-  const removeFood = (id) => {
-    setFoods(foods.filter(food => food.id !== id));
+  const removeFood = async (id) => {
+    const user = auth.currentUser;
+    if (!user) return;
+
+    await deleteCalorieEntry(user.uid, id);
+    setFoods(prev => prev.filter(food => food.id !== id));
   };
 
-  const updateQuantity = (id, newQuantity) => {
-    setFoods(foods.map(food =>
-      food.id === id ? { ...food, quantity: Math.max(1, newQuantity) } : food
-    ));
+  const updateQuantity = async (id, newQuantity) => {
+    const user = auth.currentUser;
+    if (!user) return;
+
+    const quantity = Math.max(1, newQuantity);
+    await updateCalorieQuantity(user.uid, id, quantity);
+
+    setFoods(prev =>
+      prev.map(food =>
+        food.id === id ? { ...food, quantity } : food
+      )
+    );
   };
 
-  const totalCalories = foods.reduce((sum, food) => sum + (food.calories * food.quantity), 0);
-  const targetCalories = 2000; // Default target
+  const totalCalories = foods.reduce(
+    (sum, f) => sum + f.calories * (f.quantity || 1),
+    0
+  );
+
+  const targetCalories = 2000;
   const percentageConsumed = Math.min((totalCalories / targetCalories) * 100, 100);
-
-  return (
+return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-red-50 py-12">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
@@ -165,7 +247,13 @@ export default function CalorieCounter() {
 
             {/* Added Foods List */}
             <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100">
-              <h3 className="text-xl font-bold text-gray-900 mb-4">Today's Foods</h3>
+              <h3 className="text-xl font-bold text-gray-900 mb-4">
+                Today's Foods ({new Date(selectedDate).toLocaleDateString('en-GB', {
+                  day: '2-digit',
+                    month: 'short',
+                       year: 'numeric'
+                    })})
+                  </h3>
               {foods.length === 0 ? (
                 <div className="text-center py-12">
                   <Pizza className="w-16 h-16 text-gray-300 mx-auto mb-4" />
@@ -219,9 +307,9 @@ export default function CalorieCounter() {
                 </div>
                 <div className="w-full bg-white/30 rounded-full h-3 overflow-hidden">
                   <div
-                    className="bg-white h-full rounded-full transition-all duration-300"
-                    style={{ width: `${percentageConsumed}%` }}
-                  ></div>
+                      className="bg-white h-full rounded-full transition-all duration-300"
+                      style={{ width: `${percentageConsumed}%` }}
+                    ></div>
                 </div>
                 <p className="text-xs text-white/80 mt-2">
                   {targetCalories - totalCalories > 0
@@ -287,3 +375,4 @@ function MacroBar({ label, percentage, color }) {
     </div>
   );
 }
+
