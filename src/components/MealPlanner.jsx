@@ -1,5 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Calendar, Plus, X, ChefHat, Clock, Flame, ShoppingCart, CheckCircle } from 'lucide-react';
+import { collection, addDoc, getDocs, serverTimestamp } from "firebase/firestore";
+import { auth, db } from "../firebase-config";
+
 
 export default function MealPlanner() {
   const [selectedDay, setSelectedDay] = useState(null);
@@ -15,33 +18,54 @@ export default function MealPlanner() {
     { value: 'snack', label: 'Snack', icon: '🍎', color: 'bg-green-100 text-green-700' }
   ];
 
-  // Sample meals for demonstration
-  const sampleMeals = {
-    'MON-breakfast': { name: 'Oatmeal Bowl', calories: 320, time: '07:30' },
-    'MON-lunch': { name: 'Grilled Chicken Salad', calories: 450, time: '12:30' },
-    'TUE-breakfast': { name: 'Scrambled Eggs & Toast', calories: 380, time: '07:30' },
-    'WED-breakfast': { name: 'Smoothie Bowl', calories: 290, time: '08:00' },
-    'WED-lunch': { name: 'Quinoa Buddha Bowl', calories: 520, time: '13:00' },
-    'THU-dinner': { name: 'Salmon with Veggies', calories: 580, time: '19:00' },
-  };
 
-  const [mealsData, setMealsData] = useState(sampleMeals);
+  const [mealsData, setMealsData] = useState({});
 
-  const addMeal = () => {
-    if (newMeal.name && selectedDay) {
-      const key = `${selectedDay}-${newMeal.type}`;
-      setMealsData({
-        ...mealsData,
-        [key]: {
-          name: newMeal.name,
-          calories: parseInt(newMeal.calories) || 0,
-          time: newMeal.time
-        }
-      });
-      setNewMeal({ name: '', type: 'breakfast', calories: '', time: '' });
-      setShowAddMeal(false);
+  const addMeal = async () => {
+  if (!newMeal.name || !selectedDay) return;
+
+  const user = auth.currentUser;
+  if (!user) return;
+
+  await addDoc(
+    collection(db, "users", user.uid, "meals"),
+    {
+      day: selectedDay,
+      type: newMeal.type,
+      name: newMeal.name,
+      calories: Number(newMeal.calories) || 0,
+      time: newMeal.time,
+      createdAt: serverTimestamp()
     }
-  };
+  );
+
+  setShowAddMeal(false);
+  setNewMeal({ name: "", type: "breakfast", calories: "", time: "" });
+
+  fetchMeals(); // refresh data
+};
+
+const fetchMeals = async () => {
+  const user = auth.currentUser;
+  if (!user) return;
+
+  const snap = await getDocs(
+    collection(db, "users", user.uid, "meals")
+  );
+
+  const data = {};
+  snap.forEach(doc => {
+    const m = doc.data();
+    data[`${m.day}-${m.type}`] = m;
+  });
+
+  setMealsData(data);
+};
+
+useEffect(() => {
+  fetchMeals();
+}, []);
+
 
   const removeMeal = (key) => {
     const updated = { ...mealsData };
@@ -345,3 +369,4 @@ export default function MealPlanner() {
     </div>
   );
 }
+
